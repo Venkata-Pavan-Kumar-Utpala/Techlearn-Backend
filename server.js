@@ -189,25 +189,51 @@ app.get('/progress/:userId', authenticateToken, cache('5 minutes'), async (req, 
   }
 });
 
-// Create sample data endpoint (for development only)
+// Creating Sample Data to test out the API (only for development)
 app.post('/seed-sample-data', async (req, res) => {
   if (process.env.NODE_ENV === 'production') {
     return res.status(403).json({ error: 'Not allowed in production' });
   }
 
   try {
-    // Create sample courses
+    // Define sample courses with chapters
     const courses = [
-      { title: 'Web Development Fundamentals', description: 'Learn the basics of HTML, CSS, and JavaScript' },
-      { title: 'Advanced React Patterns', description: 'Master complex React patterns and state management' },
-      { title: 'Cloud Architecture', description: 'Design and deploy scalable cloud applications' }
+      {
+        title: 'Web Development Fundamentals',
+        description: 'Learn the basics of HTML, CSS, and JavaScript',
+        chapters: [
+          { id: 'html-basics', title: 'HTML Basics' },
+          { id: 'css-fundamentals', title: 'CSS Fundamentals' },
+          { id: 'js-dom', title: 'JavaScript & DOM Manipulation' }
+        ]
+      },
+      {
+        title: 'Advanced React Patterns',
+        description: 'Master complex React patterns and state management',
+        chapters: [
+          { id: 'react-hooks', title: 'Using React Hooks' },
+          { id: 'context-api', title: 'Context API & State Sharing' },
+          { id: 'render-optimizations', title: 'Render Optimizations' }
+        ]
+      },
+      {
+        title: 'Cloud Architecture',
+        description: 'Design and deploy scalable cloud applications',
+        chapters: [
+          { id: 'cloud-design', title: 'Cloud Design Patterns' },
+          { id: 'microservices', title: 'Microservices Architecture' },
+          { id: 'devops', title: 'CI/CD and DevOps' }
+        ]
+      }
     ];
-    
+
+    // Insert courses
     const createdCourses = await Course.insertMany(courses);
-    
-    // Create sample notes for the first course
+
     const webDevCourseId = createdCourses[0]._id;
     const sampleUserId = new mongoose.Types.ObjectId(); // Random userId
+
+    // Create notes for Web Development Fundamentals
     const notes = [
       {
         courseId: webDevCourseId,
@@ -231,13 +257,13 @@ app.post('/seed-sample-data', async (req, res) => {
         tags: ['javascript', 'dom']
       }
     ];
-    
+
     await Note.insertMany(notes);
-    
-    // Create sample progress data
+
+    // Create progress entries
     const progressData = [
       {
-        userId: sampleUserId.toString(), // Convert to string to match model
+        userId: sampleUserId.toString(),
         courseId: webDevCourseId.toString(),
         completedChapters: [
           { chapterId: 'html-basics', completedAt: new Date() },
@@ -246,16 +272,16 @@ app.post('/seed-sample-data', async (req, res) => {
       },
       {
         userId: sampleUserId.toString(),
-        courseId: createdCourses[1]._id.toString(),
+        courseId: createdCourses[1]._id.toString(), // Advanced React
         completedChapters: [
           { chapterId: 'react-hooks', completedAt: new Date() }
         ]
       }
     ];
-    
+
     await Progress.insertMany(progressData);
-    
-    res.json({ 
+
+    res.json({
       message: 'Sample data created successfully',
       courses: createdCourses.length,
       notes: notes.length,
