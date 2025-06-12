@@ -3,6 +3,8 @@ const jwt = require('jsonwebtoken');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const rateLimit = require('express-rate-limit');
+const apicache = require('apicache');
 
 // Import models
 const Course = require('./models/Course');
@@ -89,19 +91,38 @@ app.get('/courses/:id/notes', authenticateToken, async (req, res) => {
   }
 });
 
-// ====== PROGRESS TRACKING ENDPOINTS ====== //
+// Progress Tracking
+
+// Rate limiting
+const progressLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per window
+  message: 'Too many progress updates, please try again later'
+});
 
 // Update user progress
-app.post('/progress', authenticateToken, async (req, res) => {
+app.post('/progress', authenticateToken, progressLimiter, async (req, res) => {
   try {
     const { courseId, chapterId } = req.body;
-    
+
     // Validate input
     if (!courseId || !chapterId) {
       return res.status(400).json({ error: 'Missing courseId or chapterId' });
     }
 
-    // Update or create progress record
+    // Check if the course exists
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    // Check if the chapter exists in that course
+    const chapterExists = course.chapters.some(ch => ch.id === chapterId || ch._id?.toString() === chapterId);
+    if (!chapterExists) {
+      return res.status(404).json({ error: 'Chapter not found in course' });
+    }
+
+    // Update or insert user progress
     const progress = await Progress.findOneAndUpdate(
       { userId: req.user.userId, courseId },
       { 
@@ -122,25 +143,44 @@ app.post('/progress', authenticateToken, async (req, res) => {
   }
 });
 
-// Get user progress
-app.get('/progress/:userId', authenticateToken, async (req, res) => {
+// Get user progress (with caching)
+
+const cache = apicache.middleware;
+app.get('/progress/:userId', authenticateToken, cache('5 minutes'), async (req, res) => {
   try {
     // Authorization check - allow if same user or admin
     if (req.user.userId !== req.params.userId && !req.user.isAdmin) {
       return res.status(403).json({ error: 'Unauthorized access' });
-    }x
+    }
 
-    const progress = await Progress.find({ userId: req.params.userId })
-      .sort({ updatedAt: -1 });
+    const progressList = await Progress.find({ userId: req.params.userId }).sort({ updatedAt: -1 });
 
-    // Format response with progress percentage
-    const formattedProgress = progress.map(p => ({
-      courseId: p.courseId,
-      totalChaptersCompleted: p.completedChapters.length,
-      lastCompletedAt: p.completedChapters.length > 0 
-        ? Math.max(...p.completedChapters.map(c => c.completedAt))
-        : null
-    }));
+    // Format response with progress percentage and lastCompletedAt
+    const formattedProgress = await Promise.all(
+      progressList.map(async (p) => {
+        const course = await Course.findById(p.courseId);
+        const totalChapters = course ? course.chapters.length : 0;
+        const completedChapters = p.completedChapters || [];
+
+        const lastCompletedAt = completedChapters.length > 0
+          ? completedChapters.reduce(
+              (latest, chapter) => chapter.completedAt > latest ? chapter.completedAt : latest,
+              completedChapters[0].completedAt
+            )
+          : null;
+
+        return {
+          _id: p._id,
+          courseId: p.courseId,
+          completedChapters,
+          totalChaptersCompleted: completedChapters.length,
+          lastCompletedAt,
+          progressPercentage: totalChapters > 0
+            ? Math.round((completedChapters.length / totalChapters) * 100)
+            : 0
+        };
+      })
+    );
 
     res.status(200).json(formattedProgress);
   } catch (err) {
@@ -197,7 +237,7 @@ app.post('/seed-sample-data', async (req, res) => {
     // Create sample progress data
     const progressData = [
       {
-        userId: sampleUserId,
+        userId: sampleUserId.toString(), // Convert to string to match model
         courseId: webDevCourseId.toString(),
         completedChapters: [
           { chapterId: 'html-basics', completedAt: new Date() },
@@ -205,7 +245,7 @@ app.post('/seed-sample-data', async (req, res) => {
         ]
       },
       {
-        userId: sampleUserId,
+        userId: sampleUserId.toString(),
         courseId: createdCourses[1]._id.toString(),
         completedChapters: [
           { chapterId: 'react-hooks', completedAt: new Date() }
